@@ -1,0 +1,56 @@
+# configs/paths.yaml
+#
+# Consolidated path constants seen across the three original notebooks.
+# Pick the block matching where you're running and pass the values as
+# CLI args to the scripts in scripts/, or load this file directly with
+# `yaml.safe_load` in a notebook cell.
+
+colab:
+  # FASDD_CV_SAM2_MaskRefine_v2.ipynb conventions
+  drive_data: /content/drive/MyDrive/Project-Phase1-VDT/DATA
+  drive_seg_orig_zip: /content/drive/MyDrive/Project-Phase1-VDT/DATA/labels_seg.zip
+  drive_seg_ref_dir: /content/drive/MyDrive/Project-Phase1-VDT/DATA/labels_seg_refined
+  drive_seg_ref_zip: /content/drive/MyDrive/Project-Phase1-VDT/DATA/labels_seg_refined.zip
+  drive_progress_json: /content/drive/MyDrive/Project-Phase1-VDT/DATA/refine_progress.json
+
+  work_dir: /content
+  img_dir: /content/<FASDD_CV>/images
+  label_dir: /content/<FASDD_CV>/annotations/YOLO_CV/labels
+  labels_fixed: /content/labels_fixed
+  labels_seg_orig: /content/labels_seg
+  labels_seg_ref: /content/labels_seg_refined
+  labels_seg_clean: /content/labels_seg_clean
+  progress_json: /content/refine_progress.json
+
+  sam2_model: sam2.1_l.pt
+
+kaggle:
+  # project-phase1-vdt.ipynb conventions
+  dataset_input_root: /kaggle/input/datasets/<user>/dataset-v2/FASDD_CV/FASDD_CV
+  img_dir: /kaggle/input/datasets/<user>/dataset-v2/FASDD_CV/FASDD_CV/images
+  label_dir: /kaggle/input/datasets/<user>/dataset-v2/FASDD_CV/FASDD_CV/annotations/YOLO_CV/labels
+
+  # uploaded as a separate Kaggle dataset after the Colab refinement run
+  labels_seg_refined_input: /kaggle/input/datasets/<user>/storage/labels_seg_refined/labels_seg_refined
+  training_data_input: /kaggle/input/datasets/<user>/storage/fasdd_training_data
+
+  work_dir: /kaggle/working
+  labels_fixed: /kaggle/working/labels_fixed
+  labels_seg_raw: /kaggle/working/labels_seg_raw       # flattened copy of labels_seg_refined_input
+  labels_seg_clean: /kaggle/working/labels_seg_clean
+  working_images: /kaggle/working/images               # symlink -> img_dir
+  working_labels: /kaggle/working/labels                # symlink -> labels_seg_clean
+
+  train_list: /kaggle/working/train_images.txt
+  val_list: /kaggle/working/val_images.txt
+  test_list: /kaggle/working/test_images.txt
+  yaml_path: /kaggle/working/fasdd_cv_seg.yaml
+
+  project_dir: /kaggle/working/runs
+  registry_csv: /kaggle/working/registry.csv
+
+dataset:
+  nc: 2
+  names:
+    0: fire
+    1: smoke
