@@ -10,6 +10,9 @@ For fixed surveillance cameras, MOG2 builds a per-pixel Gaussian mixture
 model of the static background. Any YOLO detection whose bbox region has
 insufficient foreground motion is discarded as a static FP (sunset glow,
 permanently-lit sign, headlight wash on a wall).
+
+
+thêm việc đo độ trễ các stage xử lý, đánh giá lại độ hiểu quả khi có và không có stage12 của Flame
 """
 from __future__ import annotations
 

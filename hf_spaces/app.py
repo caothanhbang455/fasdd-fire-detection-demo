@@ -1,384 +1,323 @@
 """
-app.py — FASDD-CV Fire & Smoke Detection Demo
-HuggingFace Spaces · Gradio · YOLO11m-seg + FLAME post-processing
-
-Upload a surveillance video → select checkpoint → toggle FLAME →
-get an annotated output video with confirmed fire/smoke alerts.
+app.py — FASDD-CV Fire & Smoke Detection Demo  (v2 fixed)
+Fixes: ByteTrack deprecated, Gradio 6 theme/css, frame skip, GPU device,
+       H.264 re-encode, Stop button + queue cancel
 """
 from __future__ import annotations
 
-import os
-import tempfile
-import time
+import os, shutil, subprocess, tempfile, time
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 import cv2
 import gradio as gr
 import numpy as np
 import supervision as sv
+import torch
 from ultralytics import YOLO
 
 from flame import FLAMEPipeline
 
+# ── Device + capabilities ─────────────────────────────────────────────────────
+DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
+HAS_FFMPEG = shutil.which("ffmpeg") is not None
+print(f"Device  : {DEVICE}")
+print(f"ffmpeg  : {'yes' if HAS_FFMPEG else 'NO — output may not be browser-compatible'}")
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+YOLO_SKIP    = 2      # run YOLO every N frames; reuse last det for skipped frames
+YOLO_IMGSZ   = 640
+MAX_FRAMES   = 1800   # 60s @ 30fps cap
+CONF_DEFAULT = 0.25
+IOU_DEFAULT  = 0.45
+
 # ── Model registry ────────────────────────────────────────────────────────────
-CHECKPOINT_PATHS: dict[str, str] = {
+CHECKPOINT_PATHS = {
     "YOLO11m Detection (baseline)": "models/det_best.pt",
     "YOLO11m-seg v1 (SAM2 masks)":  "models/seg_v1_best.pt",
     "YOLO11m-seg v2 (refined)":     "models/seg_v2_best.pt",
 }
-
-CLASS_NAMES   = {0: "fire", 1: "smoke"}
-CLASS_COLORS  = {0: sv.Color(r=230, g=70,  b=4),    # fire orange
-                 1: sv.Color(r=100, g=120, b=140)}   # smoke grey-blue
-ALERT_COLOR   = sv.Color(r=220, g=20,  b=20)
-
-MAX_FRAMES   = 1800   # cap at 60s @ 30fps to avoid OOM
-CONF_DEFAULT = 0.25
-IOU_DEFAULT  = 0.45
+CLASS_NAMES = {0: "fire", 1: "smoke"}
 
 
-def _load_models() -> dict[str, Optional[YOLO]]:
-    """Load all available checkpoints; missing ones return None."""
-    loaded: dict[str, Optional[YOLO]] = {}
-    for display_name, path in CHECKPOINT_PATHS.items():
+def _load_models():
+    loaded = {}
+    for name, path in CHECKPOINT_PATHS.items():
         p = Path(path)
         if p.exists():
             try:
-                loaded[display_name] = YOLO(str(p))
-                print(f"✓ Loaded  : {display_name}  ({path})")
-            except Exception as exc:
-                print(f"✗ Failed  : {display_name}  — {exc}")
-                loaded[display_name] = None
+                m = YOLO(str(p))
+                m.to(DEVICE)
+                loaded[name] = m
+                print(f"OK  {name}")
+            except Exception as e:
+                print(f"ERR {name}: {e}")
+                loaded[name] = None
         else:
-            print(f"⚠ Missing : {display_name}  ({path})")
-            loaded[display_name] = None
+            print(f"--- {name}  (missing: {path})")
+            loaded[name] = None
     return loaded
 
 
-MODELS: dict[str, Optional[YOLO]] = _load_models()
-AVAILABLE_MODELS = [k for k, v in MODELS.items() if v is not None]
-
-if not AVAILABLE_MODELS:
-    print("⚠ No model checkpoints found. Place .pt files in models/")
-    print("  Expected:")
-    for name, path in CHECKPOINT_PATHS.items():
-        print(f"    {path}  ({name})")
+MODELS         = _load_models()
+AVAILABLE      = [k for k, v in MODELS.items() if v is not None]
 
 
-# ── Annotation helpers ────────────────────────────────────────────────────────
-def _build_annotators(thickness: int = 2) -> dict:
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _reencode_h264(src: str) -> str:
+    """Re-encode to H.264 (browser-compatible). Returns path to new file."""
+    if not HAS_FFMPEG:
+        return src
+    dst = src.replace(".mp4", "_out.mp4")
+    cmd = ["ffmpeg", "-y", "-i", src,
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+           "-movflags", "+faststart", "-an", dst]
+    r = subprocess.run(cmd, capture_output=True, timeout=300)
+    if r.returncode == 0 and Path(dst).exists():
+        os.remove(src)
+        return dst
+    return src
+
+
+def _build_ann():
     return {
-        "box":   sv.BoxAnnotator(thickness=thickness),
+        "box":   sv.BoxAnnotator(thickness=2),
         "mask":  sv.MaskAnnotator(opacity=0.35),
-        "label": sv.LabelAnnotator(
-            text_scale=0.45, text_thickness=1,
-            text_padding=4,
-        ),
+        "label": sv.LabelAnnotator(text_scale=0.45, text_thickness=1, text_padding=4),
     }
 
 
-def _det_to_sv(results) -> sv.Detections:
-    """Convert ultralytics Results object → supervision Detections."""
-    if results is None or len(results.boxes) == 0:
-        return sv.Detections.empty()
-    return sv.Detections.from_ultralytics(results)
-
-
-def _annotate_frame(
-    frame: np.ndarray,
-    detections: sv.Detections,
-    annotators: dict,
-    is_alert: bool = False,
-    alert_tracks: Optional[set] = None,
-    class_names: dict = CLASS_NAMES,
-) -> np.ndarray:
-    if len(detections) == 0:
+def _annotate(frame, dets, ann, is_alert=False):
+    if len(dets) == 0:
         return frame
-
-    # Build label strings
     labels = []
-    for i, (cls_id, conf) in enumerate(
-        zip(detections.class_id, detections.confidence)
-    ):
-        name = class_names.get(int(cls_id), f"cls{cls_id}")
-        tid  = (detections.tracker_id[i] if detections.tracker_id is not None else None)
-        tid_str = f"#{int(tid)}" if tid is not None else ""
-        labels.append(f"{name}{tid_str}  {conf:.0%}")
-
+    for i, (cls_id, conf) in enumerate(zip(dets.class_id, dets.confidence)):
+        n   = CLASS_NAMES.get(int(cls_id), f"cls{cls_id}")
+        tid = dets.tracker_id[i] if dets.tracker_id is not None else None
+        labels.append(f"{n}{'#'+str(int(tid)) if tid is not None else ''} {conf:.0%}")
     vis = frame.copy()
-
-    # Masks (seg models only)
-    if detections.mask is not None:
-        vis = annotators["mask"].annotate(vis, detections)
-
-    # Boxes
-    vis = annotators["box"].annotate(vis, detections)
-    vis = annotators["label"].annotate(vis, detections, labels=labels)
-
-    # Alert overlay
+    if dets.mask is not None:
+        vis = ann["mask"].annotate(vis, dets)
+    vis = ann["box"].annotate(vis, dets)
+    vis = ann["label"].annotate(vis, dets, labels=labels)
     if is_alert:
         h, w = vis.shape[:2]
         cv2.rectangle(vis, (0, 0), (w, h), (0, 0, 220), 4)
-        cv2.putText(vis, "🔥 FIRE ALERT", (12, 36),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 220), 2)
-
+        cv2.putText(vis, "FIRE ALERT", (14, 42),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 220), 2)
     return vis
 
 
-# ── Core processing function ──────────────────────────────────────────────────
+# ── Main processing  (generator for streaming + Gradio cancel) ────────────────
 def process_video(
     video_path: str,
-    model_display_name: str,
+    model_name: str,
     use_flame: bool,
-    conf_threshold: float,
-    bg_warmup_frames: int,
-    min_track_frames: int,
+    conf: float,
+    bg_warmup: int,
+    min_track: int,
     progress: gr.Progress = gr.Progress(track_tqdm=True),
-) -> tuple[Optional[str], str]:
-    """
-    Main processing function called by Gradio.
+) -> Generator[tuple[Optional[str], str], None, None]:
 
-    Returns (output_video_path, stats_markdown).
-    """
     if not video_path:
-        return None, "⚠ Please upload a video first."
+        yield None, "Please upload a video first."
+        return
 
-    model = MODELS.get(model_display_name)
+    model = MODELS.get(model_name)
     if model is None:
-        return None, (
-            f"⚠ **{model_display_name}** checkpoint not found.\n\n"
-            "Place the `.pt` file in the `models/` folder and restart the Space."
-        )
+        yield None, f"Checkpoint **{model_name}** not loaded. Upload `.pt` to `models/`."
+        return
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return None, "⚠ Failed to open video file."
+        yield None, "Could not open video."
+        return
 
     fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = min(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), MAX_FRAMES)
+    W      = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H      = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total  = min(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), MAX_FRAMES)
 
-    # Output file
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    out_path = tmp_out.name
-    tmp_out.close()
+    raw_mp4 = tempfile.mktemp(suffix=".mp4")
+    writer  = cv2.VideoWriter(raw_mp4, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-
-    flame = FLAMEPipeline(
-        bg_warmup_frames=bg_warmup_frames,
-        min_track_frames=min_track_frames,
-    )
+    flame = FLAMEPipeline(bg_warmup_frames=bg_warmup, min_track_frames=min_track)
     flame.reset()
+    ann = _build_ann()
 
-    annotators = _build_annotators()
+    st = {"frames":0,"raw":0,"s1":0,"s2":0,"conf":0,"alerts":0,"ms":[],"afr":[]}
+    last_dets = sv.Detections.empty()
 
-    # Stats
-    stats = {
-        "frames":     0,
-        "raw_dets":   0,
-        "fp_stage1":  0,
-        "fp_stage2":  0,
-        "confirmed":  0,
-        "alerts":     0,
-        "inf_ms":     [],
-        "alert_frames": [],
-    }
-    alert_tracks: set = set()
+    yield None, f"Processing on **{DEVICE}** (skip={YOLO_SKIP}, imgsz={YOLO_IMGSZ})…"
 
-    for frame_idx in progress.tqdm(range(total_frames), desc="Processing"):
+    for fi in progress.tqdm(range(total), desc="Frames"):
         ret, frame = cap.read()
         if not ret:
             break
+        st["frames"] += 1
 
-        # YOLO inference
-        t0 = time.perf_counter()
-        results = model.predict(
-            frame, conf=conf_threshold, iou=IOU_DEFAULT,
-            verbose=False, stream=False,
-        )[0]
-        inf_ms = (time.perf_counter() - t0) * 1000
-        stats["inf_ms"].append(inf_ms)
+        if fi % YOLO_SKIP == 0:
+            t0 = time.perf_counter()
+            res = model.predict(frame, imgsz=YOLO_IMGSZ, conf=conf,
+                                iou=IOU_DEFAULT, device=DEVICE,
+                                verbose=False, stream=False)[0]
+            st["ms"].append((time.perf_counter() - t0) * 1000)
+            last_dets = sv.Detections.from_ultralytics(res) if (
+                res is not None and len(res.boxes) > 0
+            ) else sv.Detections.empty()
 
-        raw_dets = _det_to_sv(results)
-        stats["raw_dets"] += len(raw_dets)
-        stats["frames"]   += 1
+        raw = last_dets
+        st["raw"] += len(raw)
 
         if use_flame:
-            flame_result = flame.process(frame, raw_dets)
-            confirmed    = flame_result.detections
-            stats["fp_stage1"] += flame_result.fp_stage1
-            stats["fp_stage2"] += flame_result.fp_stage2
-            stats["confirmed"] += len(confirmed)
-
-            is_alert = len(flame_result.new_alerts) > 0
+            r = flame.process(frame, raw)
+            confirmed = r.detections
+            st["s1"] += r.fp_stage1
+            st["s2"] += r.fp_stage2
+            st["conf"] += len(confirmed)
+            is_alert = bool(r.new_alerts)
             if is_alert:
-                stats["alerts"] += 1
-                stats["alert_frames"].append(frame_idx)
-            for tid in flame_result.new_alerts:
-                alert_tracks.add(tid)
-
-            vis = _annotate_frame(
-                frame, confirmed, annotators,
-                is_alert=is_alert, alert_tracks=alert_tracks,
-            )
-            # Warmup indicator
-            if not flame_result.bg_warmed_up:
-                cv2.putText(vis, "BG calibrating…", (12, height - 16),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+                st["alerts"] += 1
+                st["afr"].append(fi)
+            vis = _annotate(frame, confirmed, ann, is_alert)
+            if not r.bg_warmed_up:
+                cv2.putText(vis, f"BG calibrating {fi}/{bg_warmup}",
+                            (10, H - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, (160, 160, 160), 1)
         else:
-            stats["confirmed"] += len(raw_dets)
-            vis = _annotate_frame(frame, raw_dets, annotators)
+            st["conf"] += len(raw)
+            vis = _annotate(frame, raw, ann)
 
         writer.write(vis)
+
+        if fi % 60 == 0 and fi > 0:
+            avg = float(np.mean(st["ms"])) if st["ms"] else 0
+            yield None, (
+                f"⏳ **{int(fi/total*100)}%** — {fi}/{total} frames "
+                f"| {avg:.0f} ms/frame | dets: {st['raw']}"
+            )
 
     cap.release()
     writer.release()
 
-    # ── Stats markdown ────────────────────────────────────────────────────────
-    avg_inf = float(np.mean(stats["inf_ms"])) if stats["inf_ms"] else 0.0
-    fp_total = stats["fp_stage1"] + stats["fp_stage2"]
-    fp_rate  = fp_total / max(1, stats["raw_dets"]) * 100
-    alert_ts = [f"{f/fps:.1f}s" for f in stats["alert_frames"][:5]]
+    yield None, "Re-encoding to H.264…"
+    out = _reencode_h264(raw_mp4)
 
-    flame_section = ""
+    # stats
+    avg   = float(np.mean(st["ms"])) if st["ms"] else 0
+    fptot = st["s1"] + st["s2"]
+    fpr   = fptot / max(1, st["raw"]) * 100
+    ats   = [f"{f/fps:.1f}s" for f in st["afr"][:5]]
+
+    flame_md = ""
     if use_flame:
-        flame_section = f"""
-### FLAME Post-Processing
-| Stage | Suppressed |
+        flame_md = f"""
+### FLAME Results
+| | |
 |---|---|
-| Stage 1 — Background gate | **{stats["fp_stage1"]}** |
-| Stage 2 — Trajectory filter | **{stats["fp_stage2"]}** |
-| **Total FP suppressed** | **{fp_total}** ({fp_rate:.1f}% of raw) |
-| Fire alerts triggered | **{stats["alerts"]}** |
-| Alert timestamps (first 5) | {', '.join(alert_ts) if alert_ts else '—'} |
+| Stage 1 (BG gate) suppressed | **{st['s1']}** |
+| Stage 2 (trajectory) suppressed | **{st['s2']}** |
+| **Total FP suppressed** | **{fptot}** ({fpr:.1f}% of raw) |
+| Fire alerts raised | **{st['alerts']}** |
+| Alert times (first 5) | {', '.join(ats) if ats else '—'} |
 """
-
     md = f"""
-### Processing Complete
+### ✅ Done
 
-| Metric | Value |
+| | |
 |---|---|
-| Frames processed | **{stats["frames"]}** |
-| Model | {model_display_name} |
-| FLAME | {"✅ Enabled" if use_flame else "❌ Disabled"} |
-| Raw detections | **{stats["raw_dets"]}** |
-| Confirmed detections | **{stats["confirmed"]}** |
-| Avg inference | **{avg_inf:.1f} ms/frame** (~{1000/max(1,avg_inf):.0f} FPS) |
-{flame_section}
-"""
-    return out_path, md
+| Frames | **{st['frames']}** |
+| Device | **{DEVICE}** |
+| Model | {model_name} |
+| FLAME | {"✅" if use_flame else "❌"} |
+| Frame skip | every **{YOLO_SKIP}** |
+| Raw dets | **{st['raw']}** |
+| Confirmed | **{st['conf']}** |
+| Avg inference | **{avg:.1f} ms/frame** |
+{flame_md}"""
+
+    yield out, md
 
 
-# ── Gradio UI ─────────────────────────────────────────────────────────────────
+# ── UI ────────────────────────────────────────────────────────────────────────
 _TITLE = """
-<div style="text-align:center;padding:24px 0 8px">
-  <h1 style="font-size:2rem;font-weight:800;color:#E85D04;margin:0">
-    🔥 FASDD-CV Fire &amp; Smoke Detection
+<div style="text-align:center;padding:18px 0 6px">
+  <h1 style="font-size:1.75rem;font-weight:800;color:#E85D04;margin:0">
+    🔥 FASDD-CV · Fire &amp; Smoke Detection
   </h1>
-  <p style="color:#6B7280;margin:8px 0 0;font-size:1rem">
-    YOLO11m-seg + SAM2 Pseudo-Masks + FLAME Temporal FP Suppression<br/>
-    <a href="https://github.com/YOUR_USERNAME/fasdd-cv" target="_blank"
-       style="color:#E85D04">GitHub</a>
-    &ensp;·&ensp;
-    <a href="YOUR_REPORT_LINK" target="_blank"
-       style="color:#E85D04">Technical Report</a>
-    &ensp;·&ensp;
-    <a href="YOUR_GITHUB_PAGES" target="_blank"
-       style="color:#E85D04">Project Page</a>
+  <p style="color:#6B7280;margin:6px 0 0;font-size:.9rem">
+    YOLO11m-seg · SAM2 Pseudo-Masks · FLAME Temporal FP Suppression ·
+    <a href="https://github.com/YOUR_USERNAME/fasdd-cv" target="_blank" style="color:#E85D04">GitHub</a> ·
+    <a href="YOUR_REPORT" target="_blank" style="color:#E85D04">Report</a> ·
+    <a href="YOUR_PAGES" target="_blank" style="color:#E85D04">Project Page</a>
   </p>
 </div>
 """
 
-_NO_MODELS_WARNING = """
-> ⚠️ **No model checkpoints found.** Upload your `.pt` files to the `models/` folder:
-> - `models/det_best.pt` → YOLO11m detection
-> - `models/seg_v1_best.pt` → YOLO11m-seg v1
-> - `models/seg_v2_best.pt` → YOLO11m-seg v2
-"""
+_CSS = "footer{display:none!important}"
 
 with gr.Blocks(
-    theme=gr.themes.Soft(primary_hue="orange", neutral_hue="slate"),
-    css="""
-    .gr-button-primary { background: #E85D04 !important; border-color: #E85D04 !important; }
-    footer { display: none !important; }
-    """,
-    title="FASDD-CV Fire & Smoke Detection",
+    title="FASDD-CV",
+    theme=gr.themes.Soft(
+        primary_hue="orange",
+        neutral_hue="slate"
+    ),
+    css=_CSS,
 ) as demo:
     gr.HTML(_TITLE)
 
-    if not AVAILABLE_MODELS:
-        gr.Markdown(_NO_MODELS_WARNING)
+    if not AVAILABLE:
+        gr.Markdown("> ⚠️ No checkpoints loaded. Upload `.pt` files to `models/`.")
 
     with gr.Row():
-        # ── Left column: inputs ──────────────────────────────
         with gr.Column(scale=1):
-            video_input = gr.Video(label="Upload Video", sources=["upload"])
-
-            model_choice = gr.Dropdown(
-                choices=AVAILABLE_MODELS if AVAILABLE_MODELS else list(CHECKPOINT_PATHS.keys()),
-                value=AVAILABLE_MODELS[-1] if AVAILABLE_MODELS else None,
+            video_in = gr.Video(label="Upload Video", sources=["upload"])
+            ckpt_dd  = gr.Dropdown(
+                choices=AVAILABLE or list(CHECKPOINT_PATHS),
+                value=AVAILABLE[-1] if AVAILABLE else None,
                 label="Checkpoint",
-                info="Switch between detection and segmentation models",
             )
+            flame_cb  = gr.Checkbox(value=True, label="FLAME Post-Processing")
+            conf_sl   = gr.Slider(0.1, 0.9, CONF_DEFAULT, step=0.05,
+                                  label="Confidence Threshold")
+
+            with gr.Accordion("⚙ FLAME Parameters", open=False):
+                bg_sl  = gr.Slider(10, 150, 50, step=10,
+                                   label="BG Warmup Frames",
+                                   info="50 frames ≈ 1.7s @ 30fps for fixed cameras")
+                trk_sl = gr.Slider(2, 10, 4, step=1,
+                                   label="Min Track Frames",
+                                   info="N consecutive detections before alert")
 
             with gr.Row():
-                use_flame = gr.Checkbox(
-                    value=True,
-                    label="FLAME Post-Processing",
-                    info="Background subtraction + trajectory analysis",
-                )
+                run_btn  = gr.Button("▶ Process", variant="primary", size="lg")
+                stop_btn = gr.Button("⏹ Stop",    variant="stop",    size="lg")
 
-            conf_slider = gr.Slider(
-                minimum=0.1, maximum=0.9, value=CONF_DEFAULT, step=0.05,
-                label="Confidence Threshold",
-            )
+            gr.Examples(examples=[], inputs=[video_in], label="Example Clips")
 
-            with gr.Accordion("FLAME Parameters", open=False):
-                bg_warmup = gr.Slider(
-                    minimum=10, maximum=150, value=50, step=10,
-                    label="BG Warmup Frames",
-                    info="Frames to calibrate background model (fixed cameras: 50)",
-                )
-                min_track = gr.Slider(
-                    minimum=2, maximum=10, value=4, step=1,
-                    label="Min Track Frames",
-                    info="Minimum consecutive frames before raising alert",
-                )
-
-            run_btn = gr.Button("▶ Process Video", variant="primary", size="lg")
-
-            # Example clips
-            gr.Examples(
-                examples=[],        # populate with paths once you have test videos
-                inputs=[video_input],
-                label="Example Surveillance Clips",
-            )
-
-        # ── Right column: outputs ────────────────────────────
         with gr.Column(scale=1):
-            video_output = gr.Video(label="Annotated Output", autoplay=True)
-            stats_md     = gr.Markdown(value="Results will appear here after processing.")
+            video_out = gr.Video(label="Annotated Output", autoplay=True)
+            stats_md  = gr.Markdown("Results will appear here.")
 
-    run_btn.click(
+    ev = run_btn.click(
         fn=process_video,
-        inputs=[video_input, model_choice, use_flame, conf_slider, bg_warmup, min_track],
-        outputs=[video_output, stats_md],
+        inputs=[video_in, ckpt_dd, flame_cb, conf_sl, bg_sl, trk_sl],
+        outputs=[video_out, stats_md],
         show_progress="full",
     )
+    stop_btn.click(fn=None, cancels=[ev])
 
     gr.Markdown("""
 ---
-**How FLAME works:**
-- **Stage 1 — Background Gate:** MOG2 background subtraction filters detections anchored to static scene regions (sunset glows, permanently lit areas).
-- **Stage 2 — Trajectory Analysis:** ByteTrack assigns consistent IDs; tracks are validated for fire-like dynamics (persistence, stable area growth, sustained confidence) before raising an alert.
-
-*FLAME: Gragnaniello et al., Neural Computing and Applications, 2025.*
+**FLAME:** Stage 1 — MOG2 background subtraction removes static FP (sunsets, signs).  
+Stage 2 — ByteTrack trajectory validation discards non-fire dynamics (headlight flashes, steam).  
+*Gragnaniello et al., Neural Computing and Applications 2025.*
 """)
 
+demo.queue()
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+    )

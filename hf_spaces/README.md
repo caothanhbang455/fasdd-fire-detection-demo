@@ -1,14 +1,12 @@
 ---
-title: FASDD-CV Fire and Smoke Detection
-emoji: 🔥
-colorFrom: orange
-colorTo: red
+title: fasdd-cv-demo
+emoji: 🚀
+colorFrom: blue
+colorTo: green
 sdk: gradio
-sdk_version: 4.44.0
+sdk_version: "5.34.2"
 app_file: app.py
 pinned: false
-license: mit
-short_description: YOLO11m-seg + SAM2 pseudo-masks + FLAME temporal FP suppression
 ---
 
 # FASDD-CV Fire & Smoke Detection
@@ -24,9 +22,9 @@ Demo for the VDT Phase 1 fire/smoke detection project.
 Upload your trained `.pt` checkpoints via the **Files** tab:
 
 ```
-models/det_best.pt       # YOLO11m detection baseline
+models/det_scratch.pt       # YOLO11m detection baseline
 models/seg_v1_best.pt    # YOLO11m-seg v1
-models/seg_v2_best.pt    # YOLO11m-seg v2 (recommended)
+models/det_tuning.pt    # 
 ```
 
 ## Usage
