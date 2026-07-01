@@ -283,10 +283,11 @@
     <h1>Refining Box Annotations into High-Quality Pseudo Masks for Fire and Smoke Detection</h1>
 
     <p class="authors">
-      Cao Thanh Bang &ensp;·&ensp; <a href="#">Lương Đức Vinh</a><sup>†</sup>
+      Cao Thanh Bang and Luong Duc Vinh<sup>1</sup>
     </p>
+
     <p class="affil">
-      VTS &mdash; Viettel &ensp;·&ensp; <sup>†</sup>Mentor / Advisor
+      <sup>1</sup>VTS &ndash; vinhld2@viettel.com.vn &ndash; 0355400785
     </p>
 
     <div class="badges">
@@ -311,10 +312,10 @@
   <div class="container">
     <div class="tldr-box">
       <p>
-        <strong>TL;DR</strong> &mdash; Bounding boxes are a poor fit for fire and smoke, which are irregular,
+        <strong>TL;DR</strong> &bull; Bounding boxes are a poor fit for fire and smoke, which are irregular,
         semi-transparent, and constantly changing shape. We propose a <strong>SAM2-assisted pseudo-labeling
         framework</strong> that turns the box-only annotations of <strong>FASDD_CV (95,314 images)</strong> into
-        pixel-accurate masks &mdash; no manual pixel labeling involved. An escalating <strong>cascade of four
+        pixel-accurate masks &bull; no manual pixel labeling involved. An escalating <strong>cascade of four
         refinement generators</strong> recovers boxes that SAM2 misses on the first pass, and the resulting masks
         are used as auxiliary supervision for <strong>YOLO11m-Seg</strong>, improving localization quality
         (mAP50-95) by <strong>+5.1 points</strong> over box-only training.
@@ -340,7 +341,7 @@
     <p class="lead" style="margin-bottom:24px;">
       Most large-scale fire and smoke benchmarks, including FASDD_CV, are annotated only with bounding boxes,
       since pixel-level labeling at this scale is too expensive. But flames and smoke are variant, transparent,
-      and often occupy only a small fraction of their enclosing box &mdash; so every box carries substantial
+      and often occupy only a small fraction of their enclosing box &bull; so every box carries substantial
       background noise as supervision, which limits how tightly a detector can learn to localize the true
       object extent.
     </p>
@@ -370,15 +371,15 @@
         <span class="num">01</span>
         <h3>SAM2-Assisted Pseudo-Labeling</h3>
         <p>Every existing box is treated as a prompt for SAM2, and mask generation is framed as a
-        candidate-selection problem &mdash; scored by how much of the box area a candidate mask recovers &mdash;
+        candidate-selection problem &bull; scored by how much of the box area a candidate mask recovers &bull;
         eliminating the need for any additional pixel-level manual labeling.</p>
       </div>
       <div class="contrib-card">
         <span class="num">02</span>
         <h3>Progressive Cascaded Refinement</h3>
         <p>Boxes SAM2 fails to cover on the first pass are escalated through four increasingly specialized
-        generators &mdash; midpoint prompting, crop-and-resize, an HSV heuristic for fire, and GrabCut for smoke
-        &mdash; recovering reliable masks through iterative prompting rather than accepting the first result.</p>
+        generators &bull; midpoint prompting, crop-and-resize, an HSV heuristic for fire, and GrabCut for smoke
+        &bull; recovering reliable masks through iterative prompting rather than accepting the first result.</p>
       </div>
       <div class="contrib-card">
         <span class="num">03</span>
@@ -413,7 +414,7 @@
       </figcaption>
     </figure>
 
-    <h3 style="margin-top:8px;">Stage 1 &mdash; Box-Prompted Mask Generation</h3>
+    <h3 style="margin-top:8px;">Stage 1 &bull; Box-Prompted Mask Generation</h3>
     <p style="font-size:14.5px;color:var(--text);line-height:1.75;margin-bottom:8px;">
       Every box is put into SAM2 as a bounding-box prompt, producing an initial candidate mask. Since no
       ground-truth mask exists to check against, each candidate is matched back to its source box by centroid
@@ -421,7 +422,7 @@
       threshold and a minimum box-coverage score.
     </p>
 
-    <h3 style="margin-top:28px;">Stage 2 &mdash; Cascaded Refinement</h3>
+    <h3 style="margin-top:28px;">Stage 2 &bull; Cascaded Refinement</h3>
     <p style="font-size:14.5px;color:var(--text);line-height:1.75;margin-bottom:0;">
       Boxes that remain unmatched are escalated through four generators, tried in order, until coverage is
       sufficient. Only the best-scoring candidate across all four is kept, and it is accepted as a pseudo-label
@@ -461,7 +462,7 @@
     </table>
 
     <p style="font-size:13px;color:var(--muted);margin-top:16px;">
-      Across the 57,961 boxes recovered during Stage 2, G1 alone accounts for 96.1% of cases &mdash; most boxes
+      Across the 57,961 boxes recovered during Stage 2, G1 alone accounts for 96.1% of cases &bull; most boxes
       missed in Stage 1 stem from an ambiguous initial prompt. G2, G3, and G4 contribute smaller but
       complementary gains on small, fire-colored, and diffuse-smoke instances respectively; only 0.1% of boxes
       remain unrecovered after the full cascade. The refinement process lifts full per-image coverage from
@@ -511,14 +512,14 @@
           <td>88.00</td><td>86.90</td><td>87.43</td><td>63.28</td><td>87.80</td><td>79.10</td>
         </tr>
         <tr class="highlight">
-          <td>YOLO11m-Seg &mdash; with pseudo masks</td>
+          <td>YOLO11m-Seg &bull; with pseudo masks</td>
           <td>88.50</td><td>85.30</td><td>86.90</td><td>68.40</td><td>86.60</td><td>78.10</td>
         </tr>
       </tbody>
     </table>
 
     <p style="font-size:13px;color:var(--muted);margin-top:16px;">
-      Pseudo-mask supervision does not primarily improve easy detections counted at IoU 0.50 &mdash; mAP50 for
+      Pseudo-mask supervision does not primarily improve easy detections counted at IoU 0.50 &bull; mAP50 for
       YOLO11m-Seg is close to the box-only baselines. Its advantage is in mAP50-95, a 5.1-point gain over the
       best box-only model, showing that the auxiliary masks regularize the detector toward tighter,
       boundary-aware localization of the irregular object extent.
