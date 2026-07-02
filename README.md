@@ -63,8 +63,8 @@ This repository contains three sub-projects:
 Requires Python 3.10+.
 
 ```bash
-git clone https://github.com/caothanhbang455/fasdd-fire-detection-demo.git
-cd fasdd-fire-detection-demo/pipeline
+git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
+cd YOUR_REPO/pipeline
 
 conda create -n fasdd-cv python=3.10
 conda activate fasdd-cv
