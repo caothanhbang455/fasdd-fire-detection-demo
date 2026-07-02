@@ -141,14 +141,41 @@ python scripts/run_eval.py --config configs/paths.yaml
 Test-set performance on FASDD_CV (15,884 images, 17,242 instances), compared against the original
 FASDD baselines:
 
-| Model | AP50 (fire) | AP50 (smoke) | mAP50 | mAP50-95 | Precision | Recall |
-|---|---|---|---|---|---|---|
-| ST | 81.50 | 76.10 | 78.80 | – | – | – |
-| ImgPT-ST | 83.40 | 86.40 | 84.90 | – | – | – |
-| YOLO11m (from scratch) | 87.64 | 85.64 | 86.64 | 61.92 | 86.71 | 77.53 |
-| YOLO11m (COCO fine-tuned, 640px, 50 ep) | 88.14 | 85.80 | 86.97 | 62.88 | 86.84 | 77.65 |
-| YOLO11m (COCO fine-tuned, 1024px, 100 ep) | 88.00 | 86.90 | 87.43 | 63.28 | 87.80 | 79.10 |
-| **YOLO11m-Seg — with pseudo masks** | **88.50** | **85.30** | **86.90** | **68.40** | **86.60** | **78.10** |
+## 📊 Results
+
+Test-set performance on FASDD_CV (15,884 images, 17,242 instances). Detection / instance-segmentation
+precision and recall are measured at each model's own max-F1 threshold, not a fixed confidence.
+Segmentation mIoU is accumulated at the dataset level (not averaged per image), matching the FASDD
+evaluation standard.
+
+**Detection & instance segmentation**
+
+| Model | imgsz | mAP50 | mAP50-95 | mP | mR | AP50 fire | P fire | R fire | AP50 smoke | P smoke | R smoke |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ST | – | 78.80 | – | – | – | 81.50 | – | 96.3 | 76.10 | – | 91.2 |
+| ImgPT-ST | – | 84.90 | – | – | – | 83.40 | 96.1 | – | 86.40 | – | 94.4 |
+| YOLO11m (from scratch) | 640 | 86.64 | 61.92 | 86.67 | 77.57 | 87.64 | 83.86 | 80.20 | 85.64 | 89.47 | 74.93 |
+| YOLO11m (fine-tuned, 50 ep) | 640 | 87.49 | 63.59 | 87.66 | 78.20 | 88.62 | 86.20 | 80.47 | 86.36 | 89.12 | 75.92 |
+| YOLO11m (fine-tuned, 100 ep) | 1024 | 88.03 | 64.27 | 87.85 | 79.24 | 89.04 | 86.34 | 81.09 | 87.01 | 89.37 | 77.39 |
+| **YOLO11m-Seg — with pseudo masks** | **1024** | **86.91** | **68.38** | **86.61** | **78.11** | **88.51** | **86.06** | **80.23** | **85.31** | **87.16** | **76.00** |
+
+Pseudo-mask supervision gives by far the largest gain in mAP50-95 (+4.11 over the 100-epoch fine-tuned
+detector, +6.46 over training from scratch), while mAP50 stays close to the box-only models — the gain
+is concentrated in tighter, boundary-aware localization rather than in detecting more objects at the
+loose IoU 0.50 threshold.
+
+**Semantic segmentation (pixel level)**
+
+| Model | mIoU (fg) | mIoU (3-class) | IoU fire | Dice fire | Prec fire | Recall fire | IoU smoke | Dice smoke | Prec smoke | Recall smoke | Pixel acc | fwIoU |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| YOLO-based segmentation | 45.55 | 63.06 | 36.19 | 53.15 | 71.41 | 42.32 | 54.91 | 70.89 | 67.19 | 75.03 | 97.96 | 96.46 |
+| **SegFormer-B2** | **68.44** | **78.46** | **72.95** | **84.36** | **74.50** | **97.23** | **63.94** | **78.00** | **70.83** | **86.80** | **98.49** | **97.39** |
+
+`mIoU (fg)` is the average of fire and smoke IoU and is the primary metric for the segmentation-only
+models. SegFormer-B2 leads on every metric, with the largest gap on fire (72.95 vs. 36.19 IoU) — the
+YOLO-based segmentation model misses more than half of all fire pixels in the test set. Pixel accuracy
+and fwIoU are close between the two models since both are dominated by the background class, which
+is why mIoU over the foreground classes is the more informative comparison here.
 
 Pseudo-mask supervision gives the largest gain in mAP50-95 (+5.1 over the best box-only model) —
 tighter, boundary-aware localization rather than more detections at the loose IoU=0.5 threshold.
