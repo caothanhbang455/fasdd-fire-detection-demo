@@ -74,6 +74,21 @@ pip install -r requirements.txt
 The Gradio demo (`hf_spaces/`) has its own `requirements.txt` and is deployed independently on
 Hugging Face Spaces — see its [README](hf_spaces/README.md).
 
+
+## 📦 Checkpoints
+
+| Checkpoint | Task | Backbone / imgsz | Download |
+|---|---|---|---|
+| YOLO11m (from scratch) | Detection | 640 | [link](https://drive.google.com/file/d/10U-l21FFfdlaYtF2tu4i-YRSVt6gm4Q9/view?usp=drive_link) |
+| YOLO11m (fine-tuned, 50 ep) | Detection | 640 | [link](https://drive.google.com/file/d/1tnPE5La4Np-EnE_sS_iZAZiJVGBHiMW7/view?usp=drive_link) |
+| YOLO11m (fine-tuned, 100 ep) | Detection | 1024 | [link](https://drive.google.com/file/d/1FREtYza2CurjAxDMwCmf1yzJhpRJG-N6/view?usp=drive_link) |
+| YOLO11m-Seg (pseudo masks) | Detection + Instance Segmentation | 1024 | [link](https://drive.google.com/file/d/1Ut0tKnAzUwE34BTElfdXOTG9QWS7Jm4l/view?usp=drive_link) |
+| YOLO-based semantic segmentation | Semantic Segmentation | 640 | [link](https://drive.google.com/file/d/1XIh2BTHChrVTjDJX7f-gN1UuUzbCUoyx/view?usp=drive_link) |
+| SegFormer-B2 | Semantic Segmentation | 640 | [link](https://drive.google.com/file/d/1cJuSP6u6xH1Z7vuPKYiCBzr1mGGxuJ58/view?usp=drive_link) |
+
+Download the checkpoint(s) you need and point `configs/paths.yaml` (or the `--checkpoint` /
+`--weights` flag of `scripts/run_eval.py`) at the local path before running evaluation or the demo.
+
 ## 🏎️ Quick Start
 
 All entry points live in `pipeline/scripts/` and read dataset and output locations from
