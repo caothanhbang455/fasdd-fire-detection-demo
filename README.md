@@ -63,8 +63,8 @@ This repository contains three sub-projects:
 Requires Python 3.10+.
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd YOUR_REPO/pipeline
+git clone https://github.com/caothanhbang455/fasdd-fire-detection-demo.git
+cd fasdd-fire-detection-demo/pipeline
 
 conda create -n fasdd-cv python=3.10
 conda activate fasdd-cv
@@ -135,11 +135,6 @@ python scripts/run_eval.py --config configs/paths.yaml
 | `train/model.py`, `train/train.py` | YOLO11m / YOLO11m-Seg model setup and training loop. |
 | `train/evaluate.py` | Test-split evaluation (AP50, mAP50-95, precision, recall). |
 | `train/logging_utils.py` | Training/eval logging utilities. |
-
-## 📊 Results
-
-Test-set performance on FASDD_CV (15,884 images, 17,242 instances), compared against the original
-FASDD baselines:
 
 ## 📊 Results
 
