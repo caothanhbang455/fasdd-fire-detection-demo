@@ -4,7 +4,7 @@
 
 VTS &mdash; Viettel &middot; <sup>†</sup>Mentor / Advisor &middot; Viettel Digital Talent (VDT) Program &middot; HCMUT
 
-[![Project](https://img.shields.io/badge/Project-Website-1a1a1a?style=for-the-badge)](https://YOUR_USERNAME.github.io/YOUR_REPO)
+[![Project](https://img.shields.io/badge/Project-Website-1a1a1a?style=for-the-badge)](https://caothanhbang455.github.io/fasdd-fire-detection-demo/)
 [![Report](https://img.shields.io/badge/Report-PDF-b3401d?style=for-the-badge)](https://drive.google.com/file/d/1VQazsmrkOL5lvU_W2SU7pjcOKYn7KFNp/view?usp=sharing)
 [![Demo](https://img.shields.io/badge/%F0%9F%A4%97%20Demo-Hugging%20Face%20Spaces-yellow?style=for-the-badge)](https://huggingface.co/spaces/Bangdeptrai/fasdd-cv-demo)
 [![License](https://img.shields.io/badge/License-TBD-4b5563?style=for-the-badge)](#license)
