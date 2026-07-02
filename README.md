@@ -144,7 +144,7 @@ tighter, boundary-aware localization rather than more detections at the loose Io
 </p>
 
 <p align="center">
-  <img src="static/results_yoloseg.jpg" alt="Qualitative predictions from YOLO11m-Seg on FASDD_CV test images" width="800"/>
+  <img src="static/results_yoloseg.png" alt="Qualitative predictions from YOLO11m-Seg on FASDD_CV test images" width="800"/>
   <br/><em>Qualitative predictions from YOLO11m-Seg on FASDD_CV test images.</em>
 </p>
 
